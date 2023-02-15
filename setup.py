@@ -28,6 +28,7 @@ setup(
         "tabulate",
         "ase",
         "shakenbreak",
+        "monty",
     ],
     package_data={"doped.pycdt.utils": ["*.yaml"], "doped": ["default_POTCARs.yaml"]},
     author="Seán Kavanagh",

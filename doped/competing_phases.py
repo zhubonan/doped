@@ -9,21 +9,22 @@ from pymatgen.io.vasp.inputs import Kpoints, UnknownPotcarWarning
 from pymatgen.io.vasp.outputs import Vasprun
 from pymatgen.core import Structure, Composition, Element
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-import json 
+from monty.json import MSONable
 import pandas as pd
 
 # globally ignore this shit 
 warnings.filterwarnings("ignore", category=UnknownPotcarWarning)  
 warnings.filterwarnings("ignore", message="No POTCAR file with matching TITEL fields") 
-class CompetingPhases(): 
+class CompetingPhases(MSONable): 
     """
     Sets up the phase diagram for the system based on MP data, accounting for diatomic gaseous molecules 
     """
-    def __init__(self, system, e_above_hull=0.02): 
+    def __init__(self, system, e_above_hull=0.02, entries=None): 
         """
         Args: 
-            system (list): Chemical system under investigation, e.g. ['Mg', 'O']
-            e_above_hull (float): Maximum considered energy above hull
+            system (list): Chemical system under investigation, e.g. ['Mg', 'O'].
+            e_above_hull (float): Maximum considered energy above hull.
+            entries (list): Existing `ComputedStructureEntry` objects to be used for building phase diagram.
         """
         # create list of entries 
         molecules_in_a_box = ['H2', 'O2', 'N2', 'F2', 'Cl2', 'Br2']
@@ -31,9 +32,12 @@ class CompetingPhases():
         self.data = ['pretty_formula', 'e_above_hull', 'band_gap', 'nsites', 'volume','icsd_id', "formation_energy_per_atom", 'energy_per_atom', 'energy', 'total_magnetization', 'nelements', 'elements']
         self.system = system
         stype = 'initial'
-        m = MPRester()
-        self.entries = m.get_entries_in_chemsys(self.system, inc_structure=stype, property_data=self.data)
-        self.entries = [e for e in self.entries if e.data['e_above_hull'] <= e_above_hull]
+        if entries is None:
+            m = MPRester()
+            self.entries = m.get_entries_in_chemsys(self.system, inc_structure=stype, property_data=self.data)
+            self.entries = [e for e in self.entries if e.data['e_above_hull'] <= e_above_hull]
+        else:
+            self.entries = entries
        
         competing_phases = [] 
         # check that none of the elemental ones aren't on the naughty list 
@@ -42,14 +46,23 @@ class CompetingPhases():
             struc = sym.get_primitive_standard_structure()
             if e.data['pretty_formula'] in molecules_in_a_box:
                 struc, formula, magnetisation = make_molecule_in_a_box(e.data['pretty_formula']) 
-                competing_phases.append({'structure': struc, 'formula': formula, 'formation_energy': 0, 'nsites': 2, 'ehull': 0, 'magnetisation':  magnetisation, 'molecule': True})
+                competing_phases.append({'structure': struc, 'formula': formula, 'formation_energy': 0, 'nsites': 2, 'ehull': 0, 'magnetisation':  magnetisation, 'molecule': True, "mp_id": None})
             
             else: 
-                competing_phases.append({'structure': struc, 'formula': e.data['pretty_formula'], 'formation_energy': e.data["formation_energy_per_atom"], 'nsites': e.data['nsites'], 'ehull': e.data['e_above_hull'], 'magnetisation': e.data['total_magnetization'], 'molecule': False, 'band_gap': e.data['band_gap']})
+                competing_phases.append({'structure': struc, 'formula': e.data['pretty_formula'], 'formation_energy': e.data["formation_energy_per_atom"], 'nsites': e.data['nsites'], 'ehull': e.data['e_above_hull'], 'magnetisation': e.data['total_magnetization'], 'molecule': False, 'band_gap': e.data['band_gap'], 'mp_id': e.entry_id})
 
         # remove make sure it's only unique competing phases 
         self.competing_phases = []
         [self.competing_phases.append(x) for x in competing_phases if x not in self.competing_phases]
+
+    def as_dict(self) -> dict:
+        output = {
+            "@module": self.__class__.__module__,
+            "@class": self.__class__.__name__,
+            "system": self.system,
+            "entries": [entry.as_dict() for entry in self.entries],
+        }
+        return output
 
     def convergence_setup(self, kpoints_metals=(40,120,5), kpoints_nonmetals=(5,60,5), potcar_functional='PBE_54', user_potcar_settings=None, user_incar_settings=None): 
         """
