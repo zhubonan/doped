@@ -11,7 +11,7 @@ from functools import lru_cache
 from importlib import resources
 from multiprocessing import cpu_count
 from multiprocessing.pool import Pool
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 from monty.io import zopen
@@ -2611,3 +2611,50 @@ class DefectsSet(MSONable):
 #  to `.defect_sets` etc?
 # TODO: Implement renaming folders like SnB if we try to write a folder that already exists,
 #  and the structures don't match (otherwise overwrite)
+
+
+def get_vasp_input_dict(
+    dopedset: DopedDictSet,
+    rattle: bool = False,
+    stdev: float | None = None,
+    d_min: float | None = None,
+) -> dict[Any, Any]:
+    """
+    Return generic python representations of the underlying VASP calculation
+    nputs from a dopedset.
+    """
+    output: dict[Any, Any] = {}
+    structure = dopedset.structure
+    if rattle:
+        try:
+            from shakenbreak.distortions import rattle as SnB_rattle
+        except ImportError as e:
+            raise ImportError(
+                "ShakeNBreak must be installed (pip install shakenbreak) to use the rattle option!"
+            ) from e
+        structure = SnB_rattle(dopedset.structure, stdev=stdev, d_min=d_min)
+
+    # Construct the pythonic representations of the input files.
+    incar = dict(dopedset.incar)
+    cleaned = {}
+    for key, value in incar.items():
+        if key.startswith("#"):
+            continue
+        if isinstance(value, str):
+            cleaned[key] = value.split("#")[0].strip()
+        else:
+            cleaned[key] = value
+
+    output["incar"] = cleaned
+    # Sort the structure
+    sorted_structure = structure.get_sorted_structure()
+    output["cell"] = sorted_structure.lattice.matrix
+    output["positions"] = sorted_structure.cart_coords
+    output["species"] = [specie.name for specie in sorted_structure.species]
+    # Return the kpoints related settings
+    output["kpoints_mesh"] = dopedset.kpoints.kpts
+    output["kpoints_shift"] = dopedset.kpoints.kpts_shift
+    output["kpoints_style"] = dopedset.kpoints.style.name
+    output["potcar_symbols"] = dopedset.potcar.symbols
+    output["potcar_functional"] = dopedset.potcar.functional
+    return output
